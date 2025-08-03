@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>دستیار صوتی زنده با Gemini</title>
+    <style>
+        body {
+            font-family: 'Vazirmatn', sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        #chat-container {
+            width: 80%;
+            max-width: 700px;
+            height: 70vh;
+            border: 1px solid #444;
+            border-radius: 8px;
+            overflow-y: auto;
+            padding: 20px;
+            background-color: #1e1e1e;
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 18px;
+            max-width: 80%;
+            line-height: 1.6;
+        }
+        .user-message {
+            background-color: #3b3b3b;
+            align-self: flex-start; /* پیام کاربر در سمت راست (به دلیل rtl بودن صفحه) */
+        }
+        .gemini-message {
+            background-color: #004d40;
+            align-self: flex-end; /* پیام جمینی در سمت چپ */
+        }
+        #status {
+            margin-bottom: 15px;
+            font-size: 1.1em;
+            text-align: center;
+            min-height: 25px; /* جلوگیری از پرش صفحه */
+            transition: color 0.3s ease;
+        }
+        #input-container {
+            width: 80%;
+            max-width: 700px;
+            display: flex;
+        }
+        #text-input {
+            flex-grow: 1;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #555;
+            background-color: #2c2c2c;
+            color: #e0e0e0;
+            font-size: 1em;
+        }
+        button {
+            padding: 10px 15px;
+            margin-right: 10px; /* به دلیل rtl، این فاصله در سمت چپ دکمه می‌افتد */
+            border: none;
+            background-color: #00796b;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #004d40;
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <div id="status">در حال اتصال...</div>
+    <div id="chat-container"></div>
+    <div id="input-container">
+        <input type="text" id="text-input" placeholder="یا اینجا تایپ کنید...">
+        <button id="send-button">ارسال</button>
+    </div>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const chatContainer = document.getElementById('chat-container');
+        const textInput = document.getElementById('text-input');
+        const sendButton = document.getElementById('send-button');
+
+        // --- تغییر کلیدی برای دیپلوی ---
+        // آدرس WebSocket به صورت داینامیک بر اساس آدرس صفحه ساخته می‌شود.
+        // اگر صفحه با https بار شود، از wss (پروتکل امن) استفاده می‌کند.
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const WEBSOCKET_URL = `${wsProtocol}//${window.location.host}/ws`;
+        console.log(`درحال اتصال به WebSocket در آدرس: ${WEBSOCKET_URL}`);
+        // -----------------------------
+
+        const TARGET_SAMPLE_RATE = 16000; // ورودی صوتی برای Gemini
+        const OUTPUT_SAMPLE_RATE = 24000; // خروجی صوتی از Gemini
+
+        let websocket;
+        let audioContext;
+        let audioProcessor;
+        let microphoneStream;
+        
+        let audioQueue = [];
+        let isPlaying = false;
+        let outputAudioContext;
+
+        function addMessage(text, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}-message`;
+            messageDiv.textContent = text;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function connectWebSocket() {
+            websocket = new WebSocket(WEBSOCKET_URL);
+            websocket.binaryType = 'arraybuffer';
+
+            websocket.onopen = () => {
+                statusDiv.textContent = 'متصل شد! لطفاً صحبت کنید...';
+                statusDiv.style.color = '#4caf50';
+                console.log('WebSocket متصل شد.');
+                startMicrophone();
+            };
+
+            websocket.onmessage = (event) => {
+                if (typeof event.data === 'string') {
+                    if (event.data.startsWith('TEXT: ')) {
+                        const text = event.data.substring(6);
+                        console.log("متن دریافتی:", text);
+                        addMessage(text, 'gemini');
+                    } else {
+                        console.warn("پیام متنی ناشناخته:", event.data);
+                    }
+                } else {
+                    // داده صوتی (ArrayBuffer) که باید Int16 باشد
+                    const pcmData = new Int16Array(event.data);
+                    audioQueue.push(pcmData);
+                    if (!isPlaying) {
+                        playAudioQueue();
+                    }
+                }
+            };
+
+            websocket.onclose = (event) => {
+                statusDiv.textContent = 'ارتباط قطع شد. تلاش برای اتصال مجدد...';
+                statusDiv.style.color = '#f44336';
+                console.log(`WebSocket قطع شد: Code=${event.code}, Reason=${event.reason}`);
+                stopMicrophone();
+                // اتصال مجدد پس از 3 ثانیه
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            websocket.onerror = (error) => {
+                statusDiv.textContent = 'خطا در ارتباط WebSocket.';
+                statusDiv.style.color = '#f44336';
+                console.error('خطای WebSocket:', error);
+            };
+        }
+        
+        function stopMicrophone() {
+            if (microphoneStream) {
+                microphoneStream.getTracks().forEach(track => track.stop());
+                microphoneStream = null;
+            }
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.close();
+                audioContext = null;
+            }
+        }
+        
+        async function playAudioQueue() {
+            if (audioQueue.length === 0) {
+                isPlaying = false;
+                return;
+            }
+            isPlaying = true;
+
+            // برای جلوگیری از خطا، Context صدا را فقط در صورت نیاز ایجاد می‌کنیم
+            if (!outputAudioContext || outputAudioContext.state === 'closed') {
+                outputAudioContext = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
+            }
+
+            const pcmChunk = audioQueue.shift();
+            // تبدیل از Int16 (محدوده -32768 تا 32767) به Float32 (محدوده -1.0 تا 1.0)
+            const float32Array = new Float32Array(pcmChunk.length);
+            for (let i = 0; i < pcmChunk.length; i++) {
+                float32Array[i] = pcmChunk[i] / 32768.0;
+            }
+
+            const audioBuffer = outputAudioContext.createBuffer(1, float32Array.length, OUTPUT_SAMPLE_RATE);
+            audioBuffer.copyToChannel(float32Array, 0);
+
+            const source = outputAudioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(outputAudioContext.destination);
+            source.start();
+
+            // پخش قطعه بعدی پس از اتمام این قطعه
+            source.onended = playAudioQueue;
+        }
+
+        function sendTextInput() {
+            const text = textInput.value;
+            if (text.trim() && websocket && websocket.readyState === WebSocket.OPEN) {
+                addMessage(text, 'user');
+                websocket.send(text);
+                textInput.value = '';
+            }
+        }
+
+        sendButton.addEventListener('click', sendTextInput);
+        textInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendTextInput();
+            }
+        });
+
+        // --- کد پردازشگر صوتی و راه‌اندازی میکروفون ---
+        
+        // کد AudioWorklet به صورت یک رشته تعریف می‌شود تا نیازی به فایل جداگانه نباشد
+        const audioProcessorCode = `
+        class AudioProcessor extends AudioWorkletProcessor {
+            constructor(options) {
+                super();
+                // بافری برای جمع‌آوری داده‌ها قبل از ارسال
+                this.bufferSize = 2048;
+                this.buffer = new Int16Array(this.bufferSize);
+                this.bufferIndex = 0;
+            }
+
+            process(inputs, outputs, parameters) {
+                const input = inputs[0];
+                if (input && input.length > 0) {
+                    const inputChannel = input[0]; // دریافت کانال اول صدا
+                    
+                    for (let i = 0; i < inputChannel.length; i++) {
+                        // تبدیل نمونه صدای Float32 (از -1.0 تا 1.0) به PCM 16-bit
+                        this.buffer[this.bufferIndex++] = Math.max(-1, Math.min(1, inputChannel[i])) * 0x7FFF;
+                        
+                        // وقتی بافر پر شد، آن را به thread اصلی ارسال کن
+                        if (this.bufferIndex === this.bufferSize) {
+                            this.port.postMessage(this.buffer.buffer.slice(0)); // ارسال یک کپی از بافر
+                            this.bufferIndex = 0;
+                        }
+                    }
+                }
+                // بازگرداندن true برای زنده نگه داشتن پردازشگر
+                return true;
+            }
+        }
+        registerProcessor('audio-processor', AudioProcessor);
+        `;
+
+        // ایجاد یک URL مجازی از کد رشته‌ای بالا
+        const blob = new Blob([audioProcessorCode], { type: 'application/javascript' });
+        const audioProcessorUrl = URL.createObjectURL(blob);
+
+        async function startMicrophone() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                alert('مرورگر شما از API دسترسی به میکروفون پشتیبانی نمی‌کند.');
+                return;
+            }
+
+            try {
+                // درخواست دسترسی به میکروفون
+                microphoneStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: TARGET_SAMPLE_RATE, // درخواست نرخ نمونه‌برداری مشخص
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    } 
+                });
+                
+                // ایجاد AudioContext با نرخ نمونه‌برداری مورد نیاز Gemini
+                audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+                await audioContext.audioWorklet.addModule(audioProcessorUrl);
+                
+                const source = audioContext.createMediaStreamSource(microphoneStream);
+                audioProcessor = new AudioWorkletNode(audioContext, 'audio-processor');
+
+                // دریافت داده‌های پردازش شده از Worklet و ارسال آن از طریق WebSocket
+                audioProcessor.port.onmessage = (event) => {
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        websocket.send(event.data);
+                    }
+                };
+
+                // اتصال صدای میکروفون به پردازشگر
+                source.connect(audioProcessor);
+                // ما پردازشگر را به خروجی صدا (بلندگو) وصل نمی‌کنیم تا صدای خودمان را نشنویم.
+
+                statusDiv.textContent = 'میکروفون فعال است. صحبت کنید...';
+                console.log("میکروفون با موفقیت فعال شد.");
+
+            } catch (err) {
+                statusDiv.textContent = 'دسترسی به میکروفون رد شد.';
+                console.error("خطا در دسترسی به میکروفون:", err);
+                alert("برای استفاده از این برنامه، لطفاً دسترسی به میکروفون را مجاز کنید.");
+            }
+        }
+
+        // شروع کل فرآیند
+        connectWebSocket();
+
+    </script>
+</body>
+</html>
