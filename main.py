@@ -7,7 +7,7 @@ from aiohttp import web
 # --- بخش تغییر یافته ---
 # به جای خواندن از متغیر محیطی، کلید API را مستقیماً اینجا قرار دهید.
 # هشدار: این فایل را در ریپازیتوری عمومی گیت‌هاب قرار ندهید!
-api_key = "YOUR_API_KEY_HERE" # <--- کلید API خود را اینجا بین "" کپی کنید
+api_key = "AIzaSyBoiWCq4k9w5-Uq5XtspwLylMWrrDvEE0Q" # <--- کلید API خود را اینجا بین "" کپی کنید
 
 # بررسی اینکه آیا کلید وارد شده است یا نه
 if not api_key or api_key == "YOUR_API_KEY_HERE":
