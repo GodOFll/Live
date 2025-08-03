@@ -2,14 +2,19 @@ import asyncio
 import os
 import websockets
 import google.generativeai as genai
-# خط 'from google.generativeai.client import generations' حذف شده است
 from aiohttp import web
 
-# --- بخش Gemini (بدون تغییر) ---
-api_key = os.environ.get("GEMINI_API_KEY")
-if not api_key:
-    raise ValueError("کلید GEMINI_API_KEY در متغیرهای محیطی تنظیم نشده است.")
+# --- بخش تغییر یافته ---
+# به جای خواندن از متغیر محیطی، کلید API را مستقیماً اینجا قرار دهید.
+# هشدار: این فایل را در ریپازیتوری عمومی گیت‌هاب قرار ندهید!
+api_key = "YOUR_API_KEY_HERE" # <--- کلید API خود را اینجا بین "" کپی کنید
+
+# بررسی اینکه آیا کلید وارد شده است یا نه
+if not api_key or api_key == "YOUR_API_KEY_HERE":
+    raise ValueError("لطفاً کلید API گوگل خود را در متغیر api_key قرار دهید.")
+
 genai.configure(api_key=api_key)
+# ----------------------
 
 MODEL_NAME = "models/gemini-1.5-flash-latest"
 AUDIO_INPUT_SAMPLE_RATE = 16000
@@ -17,7 +22,8 @@ AUDIO_OUTPUT_SAMPLE_RATE = 24000
 
 print("سرور پایتون برای Gemini Live API")
 
-# --- توابع مربوط به WebSocket (بدون تغییر) ---
+# --- بقیه کد بدون تغییر باقی می‌ماند ---
+
 async def forward_to_gemini(client_ws, gemini_session):
     print("شروع ارسال داده از کلاینت به Gemini...")
     try:
@@ -47,7 +53,6 @@ async def forward_to_client(client_ws, gemini_session):
     except Exception as e:
         print(f"خطا در دریافت از Gemini: {e}")
 
-# --- تابع اصلی مدیریت ارتباط WebSocket ---
 async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -77,11 +82,9 @@ async def websocket_handler(request):
     
     return ws
 
-# --- تابع برای سرویس‌دهی فایل index.html ---
 async def http_handler(request):
     return web.FileResponse('./index.html')
 
-# --- بخش اصلی برنامه برای اجرا ---
 async def main():
     app = web.Application()
     app.router.add_get('/ws', websocket_handler)
