@@ -2,8 +2,8 @@ import asyncio
 import os
 import websockets
 import google.generativeai as genai
-from google.generativeai.client import generations
-from aiohttp import web # کتابخانه جدید برای سرویس‌دهی HTTP
+# خط 'from google.generativeai.client import generations' حذف شده است
+from aiohttp import web
 
 # --- بخش Gemini (بدون تغییر) ---
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -47,7 +47,7 @@ async def forward_to_client(client_ws, gemini_session):
     except Exception as e:
         print(f"خطا در دریافت از Gemini: {e}")
 
-# --- تابع اصلی مدیریت ارتباط WebSocket (تغییر یافته برای یکپارچگی با aiohttp) ---
+# --- تابع اصلی مدیریت ارتباط WebSocket ---
 async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -77,18 +77,16 @@ async def websocket_handler(request):
     
     return ws
 
-# --- تابع جدید برای سرویس‌دهی فایل index.html ---
+# --- تابع برای سرویس‌دهی فایل index.html ---
 async def http_handler(request):
     return web.FileResponse('./index.html')
 
 # --- بخش اصلی برنامه برای اجرا ---
 async def main():
     app = web.Application()
-    # یک مسیر برای WebSocket (/ws) و یک مسیر برای صفحه اصلی (/) اضافه می‌کنیم
     app.router.add_get('/ws', websocket_handler)
     app.router.add_get('/', http_handler)
     
-    # Render پورت را از طریق متغیر محیطی PORT مشخص می‌کند
     port = int(os.environ.get("PORT", 8080))
     
     runner = web.AppRunner(app)
@@ -96,7 +94,7 @@ async def main():
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     print(f"سرور روی http://0.0.0.0:{port} در حال اجراست...")
-    await asyncio.Future() # برای همیشه در حال اجرا باقی بماند
+    await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
